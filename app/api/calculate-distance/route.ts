@@ -1,7 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || ""
-
 export async function POST(request: NextRequest) {
   try {
     const { from, to } = await request.json()
@@ -15,32 +13,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 })
     }
 
-    const waypointsParam = `${from[1]},${from[0]}|${to[1]},${to[0]}`
-    const url = `https://api.geoapify.com/v1/routing?waypoints=${waypointsParam}&mode=drive&type=balanced&apiKey=${GEOAPIFY_API_KEY}`
-
-    console.log("[v0] Fetching route from Geoapify:", url.replace(GEOAPIFY_API_KEY, "***"))
+    const url = `https://router.project-osrm.org/route/v1/driving/${from[0]},${from[1]};${to[0]},${to[1]}?overview=false`
+    console.log("[v0] Fetching route from OSRM:", url)
 
     const response = await fetch(url)
 
-    console.log("[v0] Geoapify response status:", response.status)
+    console.log("[v0] OSRM response status:", response.status)
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error("[v0] Geoapify error:", errorText)
+      console.error("[v0] OSRM error:", errorText)
       throw new Error("Failed to calculate route")
     }
 
     const data = await response.json()
-    console.log("[v0] Route features found:", data.features?.length || 0)
-
-    if (data.features && data.features.length > 0) {
-      const properties = data.features[0].properties
-      const distanceKm = properties.distance / 1000
-      const durationMin = properties.time / 60
+    const route = data?.routes?.[0]
+    if (route?.distance != null) {
+      const distanceKm = route.distance / 1000
+      const durationMin = route.duration ? route.duration / 60 : undefined
 
       console.log("[v0] Distance calculated:", distanceKm, "km")
-      console.log("[v0] Duration calculated:", durationMin, "minutes")
-
       return NextResponse.json({
         distance: distanceKm,
         duration: durationMin,

@@ -5,13 +5,13 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Upload, Plus, Trash2, Loader2, Check, ChevronsUpDown, Pencil, X, GripVertical, Calculator } from "lucide-react"
+import { Upload, Plus, Trash2, Loader2, Check, ChevronsUpDown, Pencil, X, GripVertical } from "lucide-react"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { t } from "@/lib/i18n"
 import type { Stop } from "./route-manager"
-import { geocodeAddress } from "@/lib/geoapify"
+import { geocodeAddress } from "@/lib/osm"
 import * as XLSX from "xlsx"
 import { ColumnMappingDialog } from "./column-mapping-dialog"
 
@@ -20,6 +20,8 @@ interface RouteFormProps {
   stops: Stop[]
   onClearRoute: () => void
   onReorderStops: (stops: Stop[]) => void
+  routeDistance: number
+  isRouting: boolean
 }
 
 interface AddressOption {
@@ -45,6 +47,20 @@ const STARTING_POINT = {
   town: "Kanjiža",
   address: "Put Narodnih Heroja 17, Kanjiža",
   coordinates: [20.0597, 46.0697] as [number, number],
+}
+
+const PHONE_TOKEN_REGEX = /\b\+?\d[\d\s/-]{6,}\b/g
+const ADDRESS_LETTER_REGEX = /[A-Za-z\u00C0-\u024F\u0400-\u04FF]/
+
+const sanitizeAddressInput = (raw: string) => {
+  if (!raw) return ""
+  const withoutPhones = raw.replace(PHONE_TOKEN_REGEX, " ").replace(/\s+/g, " ").trim()
+  const parts = withoutPhones
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const filtered = parts.filter((part) => ADDRESS_LETTER_REGEX.test(part))
+  return filtered.length > 0 ? filtered.join(", ") : raw.trim()
 }
 
 const offsetDuplicateCoordinates = (stopsToOffset: Stop[]): Stop[] => {
@@ -88,7 +104,14 @@ const offsetDuplicateCoordinates = (stopsToOffset: Stop[]): Stop[] => {
   return offsetStops
 }
 
-export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderStops }: RouteFormProps) {
+export default function RouteForm({
+  onAddStop,
+  stops,
+  onClearRoute,
+  onReorderStops,
+  routeDistance,
+  isRouting,
+}: RouteFormProps) {
   const [formData, setFormData] = useState({
     buyer: "",
     town: "",
@@ -115,7 +138,6 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
   })
 
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
-  const [isCalculating, setIsCalculating] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 })
 
@@ -180,7 +202,17 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
         coordinates = selectedAddress.coordinates
       } else {
         console.log("[v0] Geocoding address:", formData.address)
-        coordinates = await geocodeWithFallback(formData.address, formData.town)
+        const sanitizedAddress = sanitizeAddressInput(formData.address)
+        coordinates = await geocodeWithFallback(sanitizedAddress, formData.town)
+        if (!coordinates) {
+          const townFallback = townOptions.find(
+            (option) => option.name.trim().toLowerCase() === formData.town.trim().toLowerCase(),
+          )?.coordinates
+          if (townFallback) {
+            console.log("[v0] Using town fallback coordinates:", townFallback)
+            coordinates = townFallback
+          }
+        }
         console.log("[v0] Geocoded coordinates:", coordinates)
       }
 
@@ -188,7 +220,7 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
         id: Date.now().toString() + Math.random(),
         ...formData,
         coordinates,
-        distanceFromPrevious: undefined, // Don't calculate yet
+        distanceFromPrevious: undefined,
       }
 
       console.log("[v0] Adding new stop without distance calculation:", newStop)
@@ -334,6 +366,7 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
           town: row[mapping.town]?.toString().trim() || "",
           address: row[mapping.address]?.toString().trim() || "",
         }
+        const sanitizedAddress = sanitizeAddressInput(stopData.address)
 
         if (!stopData.buyer || !stopData.town || !stopData.address) {
           console.log("[v0] Skipping empty row:", stopData)
@@ -346,9 +379,19 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
         processedCount++
 
         try {
-          const fullAddress = `${stopData.address}, ${stopData.town}, Serbia`
+          const fullAddress = `${sanitizedAddress || stopData.address}, ${stopData.town}, Serbia`
           console.log(`[v0] Geocoding address ${processedCount}:`, fullAddress)
-          const coordinates = await geocodeWithFallback(stopData.address, stopData.town)
+          let coordinates = await geocodeWithFallback(sanitizedAddress || stopData.address, stopData.town)
+
+          if (!coordinates) {
+            const townFallback = townOptions.find(
+              (option) => option.name.trim().toLowerCase() === stopData.town.trim().toLowerCase(),
+            )?.coordinates
+            if (townFallback) {
+              console.log(`[v0] Using town fallback for ${processedCount}:`, townFallback)
+              coordinates = townFallback
+            }
+          }
 
           if (!coordinates || (coordinates[0] === 0 && coordinates[1] === 0)) {
             console.error(`[v0] Failed to geocode address ${processedCount}:`, fullAddress)
@@ -411,82 +454,6 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
   const importPercent =
     importProgress.total > 0 ? Math.round((importProgress.current / importProgress.total) * 100) : 0
 
-  const totalDistance = stops.reduce((sum, stop) => sum + (stop.distanceFromPrevious || 0), 0)
-  console.log("[v0] Total distance calculated:", totalDistance, "km")
-
-  const calculateAllDistances = async () => {
-    console.log("[v0] Manually calculating all distances")
-    setIsCalculating(true)
-
-    try {
-      console.log("[v0] Optimizing route order before distance calculation")
-      const optimizedStops = optimizeRouteOrder(stops)
-
-      // Recalculate distances for optimized route
-      const updatedStops = await recalculateDistances(optimizedStops)
-      onReorderStops(updatedStops)
-      console.log("[v0] Distance calculation complete")
-    } catch (error) {
-      console.error("[v0] Error calculating distances:", error)
-    } finally {
-      setIsCalculating(false)
-    }
-  }
-
-  const recalculateDistances = async (stopsToUpdate: Stop[]): Promise<Stop[]> => {
-    const updatedStops = [...stopsToUpdate]
-    let calculatedCount = 0
-    let failedCount = 0
-
-    console.log(`[v0] Starting distance calculation for ${updatedStops.length} stops`)
-
-    for (let i = 0; i < updatedStops.length; i++) {
-      const currentStop = updatedStops[i]
-      const prevStop = i === 0 ? STARTING_POINT : updatedStops[i - 1]
-
-      if (!currentStop.coordinates) {
-        console.error(`[v0] Stop ${i + 1} (${currentStop.buyer}) has no coordinates, skipping distance calculation`)
-        failedCount++
-        continue
-      }
-
-      if (!prevStop.coordinates) {
-        console.error(`[v0] Previous stop has no coordinates, skipping distance calculation for stop ${i + 1}`)
-        failedCount++
-        continue
-      }
-
-      console.log(`[v0] Calculating distance from stop ${i} to stop ${i + 1}`)
-      try {
-        const response = await fetch("/api/calculate-distance", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: prevStop.coordinates,
-            to: currentStop.coordinates,
-          }),
-        })
-
-        if (!response.ok) {
-          console.error(`[v0] Distance API returned error for stop ${i + 1}:`, response.status)
-          failedCount++
-          continue
-        }
-
-        const data = await response.json()
-        updatedStops[i] = { ...currentStop, distanceFromPrevious: data.distance }
-        calculatedCount++
-        console.log(`[v0] Distance for stop ${i + 1}:`, data.distance, "km")
-      } catch (error) {
-        console.error(`[v0] Error calculating distance for stop ${i + 1}:`, error)
-        failedCount++
-      }
-    }
-
-    console.log(`[v0] Distance calculation complete: ${calculatedCount} calculated, ${failedCount} failed`)
-    return updatedStops
-  }
-
   const removeStop = (index: number) => {
     if (index === 0) return // Can't remove starting point
     const newStops = stops.filter((_, i) => i !== index - 1)
@@ -515,7 +482,17 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
     setIsSubmitting(true)
 
     try {
-      const coordinates = await geocodeWithFallback(editFormData.address, editFormData.town)
+      const sanitizedAddress = sanitizeAddressInput(editFormData.address)
+      let coordinates = await geocodeWithFallback(sanitizedAddress, editFormData.town)
+      if (!coordinates) {
+        const townFallback = townOptions.find(
+          (option) => option.name.trim().toLowerCase() === editFormData.town.trim().toLowerCase(),
+        )?.coordinates
+        if (townFallback) {
+          console.log("[v0] Using town fallback coordinates:", townFallback)
+          coordinates = townFallback
+        }
+      }
 
       const actualIndex = index - 1 // Adjust for starting point
       const newStops = [...stops]
@@ -526,7 +503,7 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
         town: editFormData.town,
         address: editFormData.address,
         coordinates,
-        distanceFromPrevious: undefined, // Clear distance - will be recalculated manually
+        distanceFromPrevious: undefined,
       }
 
       onReorderStops(newStops)
@@ -587,28 +564,12 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
         </div>
         <div className="rounded-lg border bg-muted/30 p-3">
           <p className="text-xs text-muted-foreground">{t("routeDistance")}</p>
-          <p className="text-2xl font-semibold">{totalDistance > 0 ? `${totalDistance.toFixed(1)} km` : "--"}</p>
-          <p className="text-xs text-muted-foreground">{t("calculatedOnDemand")}</p>
+          <p className="text-2xl font-semibold">{routeDistance > 0 ? `${routeDistance.toFixed(1)} km` : "--"}</p>
+          {isRouting && <p className="text-xs text-muted-foreground">{t("calculatingRoute")}</p>}
         </div>
         <div className="rounded-lg border bg-muted/30 p-3">
           <p className="text-xs text-muted-foreground">{t("quickActions")}</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            {stops.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={calculateAllDistances}
-                disabled={isCalculating}
-                className="h-8 bg-transparent text-xs"
-              >
-                {isCalculating ? (
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                ) : (
-                  <Calculator className="mr-1 h-3 w-3" />
-                )}
-                {t("calculateKm")}
-              </Button>
-            )}
             {stops.length > 0 && (
               <Button variant="destructive" size="sm" onClick={onClearRoute} className="h-8 text-xs">
                 <Trash2 className="mr-1 h-3 w-3" />
@@ -676,7 +637,6 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
                     placeholder={t("addressLabel")}
                   />
                 </div>
-                <div className="w-20 flex-shrink-0" />
                 <div className="flex gap-1 flex-shrink-0">
                   <Button
                     variant="ghost"
@@ -712,18 +672,6 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
                   <div className="text-sm text-muted-foreground truncate">{stop.address}</div>
                 </div>
 
-                {stop.distanceFromPrevious ? (
-                  <div className="w-20 text-right flex-shrink-0">
-                    <span className="text-xs font-medium text-primary">
-                      +{stop.distanceFromPrevious.toFixed(1)} km
-                    </span>
-                  </div>
-                ) : (
-                  <div className="w-20 text-right flex-shrink-0">
-                    <span className="text-xs text-muted-foreground">--</span>
-                  </div>
-                )}
-
                 {index > 0 && (
                   <div className="flex gap-1 flex-shrink-0">
                     <Button
@@ -745,7 +693,7 @@ export default function RouteForm({ onAddStop, stops, onClearRoute, onReorderSto
                   </div>
                 )}
 
-                {index === 0 && <div className="w-[88px] flex-shrink-0" />}
+                {index === 0 && <div className="w-[72px] flex-shrink-0" />}
               </>
             )}
           </div>

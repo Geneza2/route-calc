@@ -19,6 +19,7 @@ import { t } from "@/lib/i18n"
 interface RouteMapProps {
   stops: Stop[]
   onRemoveStop: (id: string) => void
+  onRouteUpdate?: (distance: number, isRouting: boolean) => void
 }
 
 const STARTING_POINT: Stop = {
@@ -84,7 +85,7 @@ function RouteViewport({ stops }: { stops: Stop[] }) {
   return null
 }
 
-export default function RouteMap({ stops }: RouteMapProps) {
+export default function RouteMap({ stops, onRouteUpdate }: RouteMapProps) {
   const allStops = useMemo(() => [STARTING_POINT, ...stops], [stops])
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([])
   const [routeDistance, setRouteDistance] = useState(0)
@@ -98,6 +99,7 @@ export default function RouteMap({ stops }: RouteMapProps) {
     setRouteDistance(0)
 
     if (validStops.length < 2) {
+      setIsRouting(false)
       return () => {
         isActive = false
       }
@@ -139,6 +141,10 @@ export default function RouteMap({ stops }: RouteMapProps) {
       isActive = false
     }
   }, [allStops])
+
+  useEffect(() => {
+    onRouteUpdate?.(routeDistance, isRouting)
+  }, [onRouteUpdate, routeDistance, isRouting])
 
   const hasSummary = routeDistance > 0
 

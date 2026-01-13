@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY || ""
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+const USER_AGENT = "truck-route-calculator"
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,19 +15,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Address parameter is required" }, { status: 400 })
     }
 
-    const strategies = [
-      // Strategy 1: Full address with country filter
-      `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(address)}&filter=countrycode:rs&apiKey=${GEOAPIFY_API_KEY}`,
-      // Strategy 2: Address with Serbia explicitly in text
-      `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(address + ", Serbia")}&apiKey=${GEOAPIFY_API_KEY}`,
-    ]
+    const strategies = [address, `${address}, Serbia`]
 
     for (let i = 0; i < strategies.length; i++) {
-      const url = strategies[i]
-      console.log(`[v0] Trying geocoding strategy ${i + 1}:`, url.replace(GEOAPIFY_API_KEY, "***"))
+      const params = new URLSearchParams({
+        q: strategies[i],
+        format: "jsonv2",
+        addressdetails: "1",
+        limit: "1",
+        countrycodes: "rs",
+        "accept-language": "sr-Latn",
+      })
+      const url = `${NOMINATIM_URL}?${params.toString()}`
 
-      const response = await fetch(url)
-      console.log(`[v0] Geocode response status (strategy ${i + 1}):`, response.status)
+      console.log(`[v0] Trying geocoding strategy ${i + 1}:`, url)
+
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": USER_AGENT,
+        },
+      })
+      console.log(`[v0] Nominatim response status (strategy ${i + 1}):`, response.status)
 
       if (!response.ok) {
         console.log(`[v0] Strategy ${i + 1} failed with status:`, response.status)
@@ -34,19 +43,18 @@ export async function GET(request: NextRequest) {
       }
 
       const data = await response.json()
-      console.log(`[v0] Geocode features found (strategy ${i + 1}):`, data.features?.length || 0)
+      console.log(`[v0] Nominatim results found (strategy ${i + 1}):`, Array.isArray(data) ? data.length : 0)
 
-      if (data.features && data.features.length > 0) {
-        const feature = data.features[0]
-        const [lon, lat] = feature.geometry.coordinates
-        const resultType = feature.properties?.result_type || "unknown"
-        console.log(`[v0] Geocoded coordinates (${resultType}):`, { lon, lat })
-
-        // Warn if we only got city-level coordinates
-        if (resultType === "city" || resultType === "locality") {
-          console.log(`[v0] Warning: Only got ${resultType}-level coordinates, not street-level`)
+      if (Array.isArray(data) && data.length > 0) {
+        const result = data[0]
+        const lon = Number(result.lon)
+        const lat = Number(result.lat)
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+          console.log("[v0] Invalid coordinates returned by Nominatim")
+          continue
         }
 
+        console.log(`[v0] Geocoded coordinates:`, { lon, lat })
         return NextResponse.json({ coordinates: [lon, lat] })
       }
     }

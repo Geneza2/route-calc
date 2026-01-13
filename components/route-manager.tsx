@@ -18,6 +18,8 @@ export interface Stop {
 
 export default function RouteManager() {
   const [stops, setStops] = useState<Stop[]>([]);
+  const [routeDistance, setRouteDistance] = useState(0);
+  const [isRouting, setIsRouting] = useState(false);
 
   const addStop = (stop: Stop) => {
     setStops((prev) => [...prev, stop]);
@@ -67,13 +69,22 @@ export default function RouteManager() {
               stops={stops}
               onClearRoute={clearRoute}
               onReorderStops={reorderStops}
+              routeDistance={routeDistance}
+              isRouting={isRouting}
             />
           </div>
         </aside>
 
         <section className="h-[50vh] min-h-90 w-full xl:h-full xl:w-1/2">
           <Card className="h-full overflow-hidden rounded-none border-l bg-card/80 shadow-sm">
-            <RouteMap stops={stops} onRemoveStop={removeStop} />
+            <RouteMap
+              stops={stops}
+              onRemoveStop={removeStop}
+              onRouteUpdate={(distance, routing) => {
+                setRouteDistance(distance)
+                setIsRouting(routing)
+              }}
+            />
           </Card>
         </section>
       </div>
