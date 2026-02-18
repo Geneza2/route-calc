@@ -10,6 +10,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { t } from "@/lib/i18n"
+import { STARTING_POINT } from "@/lib/constants"
 import type { Stop } from "./route-manager"
 import { geocodeAddress } from "@/lib/osm"
 import * as XLSX from "xlsx"
@@ -39,14 +40,6 @@ interface TownOption {
   name: string
   coordinates: [number, number]
   postcode?: string
-}
-
-const STARTING_POINT = {
-  id: "starting-point",
-  buyer: t("startingPoint"),
-  town: "Kanjiža",
-  address: "Put Narodnih Heroja 17, Kanjiža",
-  coordinates: [20.0597, 46.0697] as [number, number],
 }
 
 const PHONE_TOKEN_REGEX = /\b\+?\d[\d\s/-]{6,}\b/g
@@ -258,11 +251,30 @@ export default function RouteForm({
         const workbook = XLSX.read(data, { type: "binary" })
         const sheetName = workbook.SheetNames[0]
         const worksheet = workbook.Sheets[sheetName]
-        const jsonData = XLSX.utils.sheet_to_json(worksheet) as ExcelRow[]
+        const ref = worksheet["!ref"]
+        if (!ref) {
+          console.warn("[v0] Excel sheet is empty or has no range")
+          return
+        }
+
+        const range = XLSX.utils.decode_range(ref)
+        const headerRow = range.s.r
+        const columns: string[] = []
+
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const cell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c })]
+          const header = cell?.v?.toString().trim()
+          columns.push(header || `Column ${XLSX.utils.encode_col(c)}`)
+        }
+
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, {
+          header: columns,
+          range: headerRow + 1,
+          defval: "",
+        }) as ExcelRow[]
 
         console.log("[v0] Excel data parsed:", jsonData.length, "rows")
-        if (jsonData.length > 0) {
-          const columns = Object.keys(jsonData[0])
+        if (columns.length > 0) {
           console.log("[v0] Excel columns:", columns)
           setExcelData(jsonData)
           setExcelColumns(columns)
@@ -276,7 +288,8 @@ export default function RouteForm({
   }
 
   const geocodeWithFallback = async (address: string, town: string) => {
-    const fullAddress = `${address}, ${town}, Serbia`
+    const addressPart = address ? `${address}, ` : ""
+    const fullAddress = `${addressPart}${town}, Serbia`
     let coordinates = await geocodeAddress(fullAddress)
 
     if (!coordinates || (coordinates[0] === 0 && coordinates[1] === 0)) {
@@ -362,13 +375,13 @@ export default function RouteForm({
       for (let index = 0; index < excelData.length; index++) {
         const row = excelData[index]
         const stopData = {
-          buyer: row[mapping.buyer]?.toString().trim() || "",
-          town: row[mapping.town]?.toString().trim() || "",
-          address: row[mapping.address]?.toString().trim() || "",
+          buyer: mapping.buyer ? row[mapping.buyer]?.toString().trim() || "" : "",
+          town: mapping.town ? row[mapping.town]?.toString().trim() || "" : "",
+          address: mapping.address ? row[mapping.address]?.toString().trim() || "" : "",
         }
         const sanitizedAddress = sanitizeAddressInput(stopData.address)
 
-        if (!stopData.buyer || !stopData.town || !stopData.address) {
+        if (!stopData.buyer || !stopData.town) {
           console.log("[v0] Skipping empty row:", stopData)
           skippedCount++
           setImportProgress({ current: index + 1, total: excelData.length })
@@ -379,7 +392,8 @@ export default function RouteForm({
         processedCount++
 
         try {
-          const fullAddress = `${sanitizedAddress || stopData.address}, ${stopData.town}, Serbia`
+          const addressPart = sanitizedAddress || stopData.address
+          const fullAddress = addressPart ? `${addressPart}, ${stopData.town}, Serbia` : `${stopData.town}, Serbia`
           console.log(`[v0] Geocoding address ${processedCount}:`, fullAddress)
           let coordinates = await geocodeWithFallback(sanitizedAddress || stopData.address, stopData.town)
 

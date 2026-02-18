@@ -21,10 +21,10 @@ interface ColumnMappingDialogProps {
   onComplete: (mapping: Record<string, string>) => void
 }
 
-const REQUIRED_FIELDS = [
-  { key: "buyer", labelKey: "buyerLabel" },
-  { key: "town", labelKey: "townLabel" },
-  { key: "address", labelKey: "addressLabel" },
+const COLUMN_FIELDS = [
+  { key: "buyer", labelKey: "buyerLabel", required: true },
+  { key: "town", labelKey: "townLabel", required: true },
+  { key: "address", labelKey: "addressLabel", required: false },
 ] as const
 
 export function ColumnMappingDialog({ open, onOpenChange, columns, onComplete }: ColumnMappingDialogProps) {
@@ -49,7 +49,9 @@ export function ColumnMappingDialog({ open, onOpenChange, columns, onComplete }:
     setMapping({ ...mapping, [fieldKey]: value })
   }
 
-  const isComplete = REQUIRED_FIELDS.every((field) => mapping[field.key])
+  const isComplete = COLUMN_FIELDS.filter((field) => field.required).every((field) => mapping[field.key])
+  const mappedRequiredCount = COLUMN_FIELDS.filter((field) => field.required && mapping[field.key]).length
+  const requiredCount = COLUMN_FIELDS.filter((field) => field.required).length
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,7 +62,7 @@ export function ColumnMappingDialog({ open, onOpenChange, columns, onComplete }:
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {REQUIRED_FIELDS.map((field) => (
+          {COLUMN_FIELDS.map((field) => (
             <div key={field.key} className="grid grid-cols-2 gap-4 items-center">
               <Label htmlFor={field.key} className="text-right font-medium">
                 {t(field.labelKey)}
@@ -90,7 +92,7 @@ export function ColumnMappingDialog({ open, onOpenChange, columns, onComplete }:
             {t("cancel")}
           </Button>
           <Button onClick={handleComplete} disabled={!isComplete}>
-            {t("importStops")} ({REQUIRED_FIELDS.filter((f) => mapping[f.key]).length}/{REQUIRED_FIELDS.length})
+            {t("importStops")} ({mappedRequiredCount}/{requiredCount})
           </Button>
         </DialogFooter>
       </DialogContent>

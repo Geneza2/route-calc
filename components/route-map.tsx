@@ -15,19 +15,12 @@ import {
 } from "@/components/ui/map"
 import { cn } from "@/lib/utils"
 import { t } from "@/lib/i18n"
+import { STARTING_POINT } from "@/lib/constants"
 
 interface RouteMapProps {
   stops: Stop[]
   onRemoveStop: (id: string) => void
   onRouteUpdate?: (distance: number, isRouting: boolean) => void
-}
-
-const STARTING_POINT: Stop = {
-  id: "starting-point",
-  buyer: t("startingPoint"),
-  town: "Kanjiža",
-  address: "Put Narodnih Heroja 17, Kanjiža",
-  coordinates: [20.0597, 46.0697],
 }
 
 const DEFAULT_CENTER: [number, number] = [20.4651, 44.0165]
