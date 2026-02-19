@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { buildOsrmRouteUrl, getOsrmConfig } from "@/lib/osrm-server"
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,8 +14,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 })
     }
 
-    const url = `https://router.project-osrm.org/route/v1/driving/${from[0]},${from[1]};${to[0]},${to[1]}?overview=false`
-    console.log("[v0] Fetching route from OSRM:", url)
+    const coordinates = `${from[0]},${from[1]};${to[0]},${to[1]}`
+    const url = buildOsrmRouteUrl(coordinates, "overview=false")
+    const { baseUrl, profile } = getOsrmConfig()
+    console.log("[v0] Fetching route from OSRM:", { baseUrl, profile, url })
 
     const response = await fetch(url)
 

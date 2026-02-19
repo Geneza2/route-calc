@@ -101,19 +101,14 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
     const style = map.getStyle();
     if (!style?.layers) return;
 
-    const latinTextField = [
-      "coalesce",
-      ["get", "name:sr-Latn"],
-      ["get", "name:latin"],
-    ];
+    const latinTextField = ["get", "name:sr-Latn"];
 
     const shouldOverrideTextField = (textField: unknown) => {
       if (!textField) return false;
-      if (typeof textField === "string") {
-        return textField.includes("name");
-      }
       try {
-        return JSON.stringify(textField).includes("\"name\"");
+        const raw =
+          typeof textField === "string" ? textField : JSON.stringify(textField);
+        return /"name(:[^"]+)?"/.test(raw) || /name(:[a-zA-Z0-9_-]+)?/.test(raw);
       } catch {
         return false;
       }
@@ -191,9 +186,14 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
   }, [mapInstance, resolvedTheme, mapStyles, clearStyleTimeout]);
 
   useEffect(() => {
-    if (!mapInstance || !isStyleLoaded || !useLatinLabels) return;
-    applyLatinLabels(mapInstance);
-  }, [mapInstance, isStyleLoaded, useLatinLabels, applyLatinLabels]);
+    if (!mapInstance || !useLatinLabels) return;
+    const handler = () => applyLatinLabels(mapInstance);
+    mapInstance.on("styledata", handler);
+    handler();
+    return () => {
+      mapInstance.off("styledata", handler);
+    };
+  }, [mapInstance, useLatinLabels, applyLatinLabels, isStyleLoaded]);
 
   const isLoading = !isLoaded || !isStyleLoaded;
 

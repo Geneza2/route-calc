@@ -25,6 +25,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# osrm data
+osrm/*.osm.pbf
+osrm/*.osrm*
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

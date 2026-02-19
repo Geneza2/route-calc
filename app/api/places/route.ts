@@ -1,9 +1,17 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+const OVERPASS_URLS = (process.env.OVERPASS_URLS ||
+  "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter,https://overpass.nchc.org.tw/api/interpreter"
+)
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean)
 const USER_AGENT = "truck-route-calculator"
-const CYRILLIC_REGEX = /[\u0400-\u04FF]/
 const PLACE_PREFIX = /^(Grad|Op\u0161tina|\u0413\u0440\u0430\u0434|\u041e\u043f\u0448\u0442\u0438\u043d\u0430)\s+/i
+const CACHE_TTL_MS = 1000 * 60 * 60 * 12
+
+let cachedPlaces: PlaceOption[] | null = null
+let cachedAt = 0
 
 type PlaceOption = {
   name: string
@@ -12,10 +20,8 @@ type PlaceOption = {
 }
 
 const pickLatinTag = (tags: Record<string, string>, key: string) => {
-  const latin = tags[`${key}:sr-Latn`] ?? tags[`${key}:latin`]
+  const latin = tags[`${key}:sr-Latn`]
   if (latin && latin.trim()) return latin.trim()
-  const fallback = tags[key]
-  if (fallback && fallback.trim() && !CYRILLIC_REGEX.test(fallback)) return fallback.trim()
   return undefined
 }
 
@@ -49,7 +55,30 @@ const extractPlace = (element: any): PlaceOption | null => {
   }
 }
 
+const fetchWithTimeout = async (url: string, body: string) => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 25000)
+
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": USER_AGENT,
+      },
+      body,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 const fetchPlaces = async () => {
+  if (cachedPlaces && Date.now() - cachedAt < CACHE_TTL_MS) {
+    return cachedPlaces
+  }
+
   const query = [
     "[out:json][timeout:60];",
     'area["ISO3166-1"="RS"][admin_level=2]->.searchArea;',
@@ -61,22 +90,31 @@ const fetchPlaces = async () => {
     "out center tags;",
   ].join("\n")
 
-  const response = await fetch(OVERPASS_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": USER_AGENT,
-    },
-    body: `data=${encodeURIComponent(query)}`,
-  })
+  const body = `data=${encodeURIComponent(query)}`
+  let lastError: unknown = null
+  let data: any = null
 
-  if (!response.ok) {
-    const errorData = await response.text()
-    console.error("[v0] Overpass places error:", errorData)
-    throw new Error("Failed to fetch places")
+  for (const url of OVERPASS_URLS) {
+    try {
+      const response = await fetchWithTimeout(url, body)
+      if (!response.ok) {
+        const errorData = await response.text()
+        console.error("[v0] Overpass places error:", { url, status: response.status, errorData })
+        lastError = new Error(`Overpass error ${response.status}`)
+        continue
+      }
+      data = await response.json()
+      break
+    } catch (error) {
+      console.error("[v0] Overpass places request failed:", { url, error })
+      lastError = error
+    }
   }
 
-  const data = await response.json()
+  if (!data) {
+    throw lastError ?? new Error("Failed to fetch places")
+  }
+
   const elements = Array.isArray(data?.elements) ? data.elements : []
   const seen = new Set<string>()
   const places: PlaceOption[] = []
@@ -92,7 +130,10 @@ const fetchPlaces = async () => {
     places.push(place)
   })
 
-  return places.sort((a, b) => a.name.localeCompare(b.name))
+  const sorted = places.sort((a, b) => a.name.localeCompare(b.name))
+  cachedPlaces = sorted
+  cachedAt = Date.now()
+  return sorted
 }
 
 export async function GET(_: NextRequest) {

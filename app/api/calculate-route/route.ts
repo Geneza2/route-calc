@@ -1,9 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-
-const buildOsrmUrl = (waypoints: [number, number][]) => {
-  const coordinates = waypoints.map(([lng, lat]) => `${lng},${lat}`).join(";")
-  return `https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson&alternatives=false`
-}
+import { buildOsrmRouteUrl, getOsrmConfig } from "@/lib/osrm-server"
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,8 +12,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "At least 2 waypoints required" }, { status: 400 })
     }
 
-    const url = buildOsrmUrl(waypoints)
-    console.log("[v0] Fetching route from OSRM:", url)
+    const coordinates = waypoints.map(([lng, lat]) => `${lng},${lat}`).join(";")
+    const url = buildOsrmRouteUrl(coordinates, "overview=full&geometries=geojson&alternatives=false")
+    const { baseUrl, profile } = getOsrmConfig()
+    console.log("[v0] Fetching route from OSRM:", { baseUrl, profile, url })
 
     const response = await fetch(url)
 
