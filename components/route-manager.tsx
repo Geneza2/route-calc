@@ -3,6 +3,7 @@
 import { useState } from "react";
 import RouteForm from "@/components/route-form";
 import RouteMap from "@/components/route-map";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Truck } from "lucide-react";
 import { t } from "@/lib/i18n";
@@ -20,6 +21,7 @@ export default function RouteManager() {
   const [stops, setStops] = useState<Stop[]>([]);
   const [routeDistance, setRouteDistance] = useState(0);
   const [isRouting, setIsRouting] = useState(false);
+  const [isTruckRoute, setIsTruckRoute] = useState(true);
 
   const addStop = (stop: Stop) => {
     setStops((prev) => [...prev, stop]);
@@ -54,6 +56,26 @@ export default function RouteManager() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center rounded-full border bg-background/80 p-0.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={isTruckRoute ? "default" : "outline"}
+                  className="h-7 rounded-full px-3 text-[11px]"
+                  onClick={() => setIsTruckRoute(true)}
+                >
+                  {t("vehicleTruck")}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={!isTruckRoute ? "default" : "outline"}
+                  className="h-7 rounded-full px-3 text-[11px]"
+                  onClick={() => setIsTruckRoute(false)}
+                >
+                  {t("vehicleCar")}
+                </Button>
+              </div>
               <div className="rounded-full border bg-background/80 px-3 py-1 text-xs text-muted-foreground">
                 {t("activeStops")}: {stops.length}
               </div>
@@ -80,6 +102,7 @@ export default function RouteManager() {
             <RouteMap
               stops={stops}
               onRemoveStop={removeStop}
+              isTruckRoute={isTruckRoute}
               onRouteUpdate={(distance, routing) => {
                 setRouteDistance(distance)
                 setIsRouting(routing)

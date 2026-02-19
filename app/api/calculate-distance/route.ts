@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { buildOsrmRouteUrl, getOsrmConfig } from "@/lib/osrm-server"
+import { buildOrsRouteUrl, getOrsConfig } from "@/lib/ors-server"
 
 export async function POST(request: NextRequest) {
   try {
-    const { from, to } = await request.json()
+    const { from, to, isTruck } = await request.json()
+    const mode = isTruck === false ? "car" : "truck"
 
     console.log("[v0] Calculate distance API called")
     console.log("[v0] From coordinates:", from)
@@ -14,26 +15,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid coordinates" }, { status: 400 })
     }
 
-    const coordinates = `${from[0]},${from[1]};${to[0]},${to[1]}`
-    const url = buildOsrmRouteUrl(coordinates, "overview=false")
-    const { baseUrl, profile } = getOsrmConfig()
-    console.log("[v0] Fetching route from OSRM:", { baseUrl, profile, url })
+    const { baseUrl, profile, apiKey } = getOrsConfig(mode)
+    if (!apiKey) {
+      console.error("[v0] Missing ORS_KEY for routing")
+      return NextResponse.json({ error: "Routing provider unavailable" }, { status: 500 })
+    }
 
-    const response = await fetch(url)
+    const url = buildOrsRouteUrl({ baseUrl, profile })
+    console.log("[v0] Fetching route from ORS:", { baseUrl, profile, url })
 
-    console.log("[v0] OSRM response status:", response.status)
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ coordinates: [from, to] }),
+    })
+
+    console.log("[v0] ORS response status:", response.status)
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error("[v0] OSRM error:", errorText)
+      console.error("[v0] ORS error:", errorText)
       throw new Error("Failed to calculate route")
     }
 
     const data = await response.json()
-    const route = data?.routes?.[0]
-    if (route?.distance != null) {
-      const distanceKm = route.distance / 1000
-      const durationMin = route.duration ? route.duration / 60 : undefined
+    const feature = data?.features?.[0]
+    const summary = feature?.properties?.summary
+    if (summary?.distance != null) {
+      const distanceKm = summary.distance / 1000
+      const durationMin = summary.duration ? summary.duration / 60 : undefined
 
       console.log("[v0] Distance calculated:", distanceKm, "km")
       return NextResponse.json({

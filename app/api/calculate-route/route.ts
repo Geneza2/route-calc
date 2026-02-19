@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { buildOsrmRouteUrl, getOsrmConfig } from "@/lib/osrm-server"
+import { buildOrsRouteUrl, getOrsConfig } from "@/lib/ors-server"
 
 export async function POST(request: NextRequest) {
   try {
-    const { waypoints } = await request.json()
+    const { waypoints, isTruck } = await request.json()
+    const mode = isTruck === false ? "car" : "truck"
 
     console.log("[v0] Calculate route API called with waypoints:", waypoints?.length || 0)
 
@@ -12,29 +13,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "At least 2 waypoints required" }, { status: 400 })
     }
 
-    const coordinates = waypoints.map(([lng, lat]) => `${lng},${lat}`).join(";")
-    const url = buildOsrmRouteUrl(coordinates, "overview=full&geometries=geojson&alternatives=false")
-    const { baseUrl, profile } = getOsrmConfig()
-    console.log("[v0] Fetching route from OSRM:", { baseUrl, profile, url })
+    const { baseUrl, profile, apiKey } = getOrsConfig(mode)
+    if (!apiKey) {
+      console.error("[v0] Missing ORS_KEY for routing")
+      return NextResponse.json({ error: "Routing provider unavailable" }, { status: 500 })
+    }
 
-    const response = await fetch(url)
+    const url = buildOrsRouteUrl({ baseUrl, profile })
+    console.log("[v0] Fetching route from ORS:", { baseUrl, profile, url })
 
-    console.log("[v0] OSRM route response status:", response.status)
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ coordinates: waypoints }),
+    })
+
+    console.log("[v0] ORS route response status:", response.status)
 
     if (!response.ok) {
       const errorData = await response.text()
-      console.error("[v0] OSRM route API error:", errorData)
+      console.error("[v0] ORS route API error:", errorData)
       throw new Error("Failed to calculate route")
     }
 
     const data = await response.json()
-    const route = data?.routes?.[0]
-    const geometry = route?.geometry
+    const feature = data?.features?.[0]
+    const geometry = feature?.geometry
+    const summary = feature?.properties?.summary
 
-    if (geometry) {
+    if (geometry && summary?.distance != null) {
       const result = {
-        distance: route.distance / 1000, // Convert to km
-        duration: route.duration / 60, // Convert to minutes
+        distance: summary.distance / 1000,
+        duration: summary.duration / 60,
         geometry,
       }
       console.log("[v0] Route calculated:", { distance: result.distance, duration: result.duration })

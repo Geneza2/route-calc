@@ -21,6 +21,7 @@ interface RouteMapProps {
   stops: Stop[]
   onRemoveStop: (id: string) => void
   onRouteUpdate?: (distance: number, isRouting: boolean) => void
+  isTruckRoute?: boolean
 }
 
 const DEFAULT_CENTER: [number, number] = [20.4651, 44.0165]
@@ -78,7 +79,7 @@ function RouteViewport({ stops }: { stops: Stop[] }) {
   return null
 }
 
-export default function RouteMap({ stops, onRouteUpdate }: RouteMapProps) {
+export default function RouteMap({ stops, onRouteUpdate, isTruckRoute }: RouteMapProps) {
   const allStops = useMemo(() => [STARTING_POINT, ...stops], [stops])
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([])
   const [routeDistance, setRouteDistance] = useState(0)
@@ -104,7 +105,7 @@ export default function RouteMap({ stops, onRouteUpdate }: RouteMapProps) {
     fetch("/api/calculate-route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ waypoints }),
+      body: JSON.stringify({ waypoints, isTruck: isTruckRoute }),
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -133,7 +134,7 @@ export default function RouteMap({ stops, onRouteUpdate }: RouteMapProps) {
     return () => {
       isActive = false
     }
-  }, [allStops])
+  }, [allStops, isTruckRoute])
 
   useEffect(() => {
     onRouteUpdate?.(routeDistance, isRouting)
