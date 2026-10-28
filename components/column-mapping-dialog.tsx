@@ -22,26 +22,36 @@ interface ColumnMappingDialogProps {
 }
 
 const COLUMN_FIELDS = [
-  { key: "buyer", labelKey: "buyerLabel", required: true },
-  { key: "town", labelKey: "townLabel", required: true },
-  { key: "address", labelKey: "addressLabel", required: false },
+  { key: "buyer", labelKey: "buyerLabel", required: true, match: /kupac|buyer|customer/i },
+  { key: "town", labelKey: "townLabel", required: true, match: /mesto|grad|town|city/i },
+  { key: "address", labelKey: "addressLabel", required: false, match: /adresa|address|kontakt|napomena/i },
 ] as const
+
+// Radix Select does not allow an empty item value
+const NO_COLUMN = "__none__"
 
 export function ColumnMappingDialog({ open, onOpenChange, columns, onComplete }: ColumnMappingDialogProps) {
   const [mapping, setMapping] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    if (open) {
-      console.log("[v0] Column mapping dialog opened")
-      console.log("[v0] Available columns:", columns)
-      console.log("[v0] Number of columns:", columns.length)
-    }
+    if (!open) return
+    console.log("[v0] Column mapping dialog opened with columns:", columns)
+
+    // Preselect columns whose header matches a known name (e.g. KUPAC, Mesto, Kontakt/napomena)
+    const guessed: Record<string, string> = {}
+    COLUMN_FIELDS.forEach((field) => {
+      const column = columns.find((name) => field.match.test(name))
+      guessed[field.key] = column ?? (field.required ? "" : NO_COLUMN)
+    })
+    setMapping(guessed)
   }, [open, columns])
 
   const handleComplete = () => {
-    console.log("[v0] Column mapping completed:", mapping)
-    onComplete(mapping)
-    setMapping({})
+    const finalMapping = Object.fromEntries(
+      Object.entries(mapping).filter(([, column]) => column && column !== NO_COLUMN),
+    )
+    console.log("[v0] Column mapping completed:", finalMapping)
+    onComplete(finalMapping)
   }
 
   const handleMappingChange = (fieldKey: string, value: string) => {
@@ -72,6 +82,11 @@ export function ColumnMappingDialog({ open, onOpenChange, columns, onComplete }:
                   <SelectValue placeholder={t("selectColumnPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent position="popper" className="z-[150]">
+                  {!field.required && (
+                    <SelectItem value={NO_COLUMN} className="text-xs text-muted-foreground">
+                      {t("noColumn")}
+                    </SelectItem>
+                  )}
                   {columns.length === 0 ? (
                     <div className="p-2 text-xs text-muted-foreground">{t("noColumnsAvailable")}</div>
                   ) : (

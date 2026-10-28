@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { buildOrsRouteUrl, getOrsConfig } from "@/lib/ors-server"
+import { buildOrsRouteBody, buildOrsRouteUrl, getOrsConfig } from "@/lib/ors-server"
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
         Authorization: apiKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ coordinates: [from, to] }),
+      body: JSON.stringify(buildOrsRouteBody([from, to], profile)),
     })
 
     console.log("[v0] ORS response status:", response.status)

@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { buildOrsRouteUrl, getOrsConfig } from "@/lib/ors-server"
+import { buildOrsRouteBody, buildOrsRouteUrl, getOrsConfig } from "@/lib/ors-server"
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +20,8 @@ export async function POST(request: NextRequest) {
     }
 
     const url = buildOrsRouteUrl({ baseUrl, profile })
-    console.log("[v0] Fetching route from ORS:", { baseUrl, profile, url })
+    const body = buildOrsRouteBody(waypoints, profile)
+    console.log("[v0] Fetching route from ORS:", { baseUrl, profile, url, options: body.options })
 
     const response = await fetch(url, {
       method: "POST",
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
         Authorization: apiKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ coordinates: waypoints }),
+      body: JSON.stringify(body),
     })
 
     console.log("[v0] ORS route response status:", response.status)

@@ -1,15 +1,45 @@
-export async function geocodeAddress(address: string): Promise<[number, number] | undefined> {
-  try {
-    const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
-    const data = await response.json()
+// Nominatim usage policy allows at most 1 request per second
+const GEOCODE_MIN_INTERVAL_MS = 1100
 
-    if (data.coordinates) {
-      return data.coordinates
-    }
-  } catch (error) {
-    console.error("Geocoding error:", error)
+const geocodeCache = new Map<string, Promise<[number, number] | undefined>>()
+let nextGeocodeSlot = 0
+
+const waitForGeocodeSlot = async () => {
+  const now = Date.now()
+  const wait = Math.max(0, nextGeocodeSlot - now)
+  nextGeocodeSlot = Math.max(now, nextGeocodeSlot) + GEOCODE_MIN_INTERVAL_MS
+  if (wait > 0) {
+    await new Promise((resolve) => setTimeout(resolve, wait))
   }
-  return undefined
+}
+
+export async function geocodeAddress(address: string): Promise<[number, number] | undefined> {
+  const key = address.trim().toLowerCase()
+  const cached = geocodeCache.get(key)
+  if (cached) return cached
+
+  const request = (async () => {
+    await waitForGeocodeSlot()
+    try {
+      const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
+      const data = await response.json()
+
+      if (data.coordinates) {
+        return data.coordinates as [number, number]
+      }
+      // Only cache "not found"; rate limits and server errors may succeed on retry
+      if (response.status !== 404) {
+        geocodeCache.delete(key)
+      }
+    } catch (error) {
+      console.error("Geocoding error:", error)
+      geocodeCache.delete(key)
+    }
+    return undefined
+  })()
+
+  geocodeCache.set(key, request)
+  return request
 }
 
 export async function calculateRoute(

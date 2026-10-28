@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import RouteForm from "@/components/route-form";
 import RouteMap from "@/components/route-map";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,11 @@ export default function RouteManager() {
   const reorderStops = (newStops: Stop[]) => {
     setStops(newStops);
   };
+
+  const handleRouteUpdate = useCallback((distance: number, routing: boolean) => {
+    setRouteDistance(distance);
+    setIsRouting(routing);
+  }, []);
 
   return (
     <div className="relative min-h-screen xl:h-screen xl:max-h-screen xl:overflow-hidden">
@@ -103,10 +108,7 @@ export default function RouteManager() {
               stops={stops}
               onRemoveStop={removeStop}
               isTruckRoute={isTruckRoute}
-              onRouteUpdate={(distance, routing) => {
-                setRouteDistance(distance)
-                setIsRouting(routing)
-              }}
+              onRouteUpdate={handleRouteUpdate}
             />
           </Card>
         </section>

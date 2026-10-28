@@ -32,3 +32,6 @@ osrm/*.osrm*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# example input files (real customer data)
+/.examples/

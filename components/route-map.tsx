@@ -30,6 +30,25 @@ const SERBIA_BOUNDS: MapLibreGL.LngLatBoundsLike = [
   [23.0, 46.2],
 ]
 
+// ~20 m between markers that share a location; display only, routing uses the real coordinates
+const MARKER_SPREAD_DEG = 0.0002
+
+const spreadOverlappingMarkers = (stops: Stop[]) => {
+  const seen = new Map<string, number>()
+  return stops.map((stop) => {
+    if (!stop.coordinates) return undefined
+    const key = stop.coordinates.join(",")
+    const count = seen.get(key) ?? 0
+    seen.set(key, count + 1)
+    if (count === 0) return stop.coordinates
+    const angle = (count * 2 * Math.PI) / 6
+    return [
+      stop.coordinates[0] + Math.cos(angle) * MARKER_SPREAD_DEG * Math.ceil(count / 6),
+      stop.coordinates[1] + Math.sin(angle) * MARKER_SPREAD_DEG * Math.ceil(count / 6),
+    ] as [number, number]
+  })
+}
+
 const extractRouteCoordinates = (geometry?: {
   type?: string
   coordinates?: unknown
@@ -81,18 +100,24 @@ function RouteViewport({ stops }: { stops: Stop[] }) {
 
 export default function RouteMap({ stops, onRouteUpdate, isTruckRoute }: RouteMapProps) {
   const allStops = useMemo(() => [STARTING_POINT, ...stops], [stops])
+  const markerPositions = useMemo(() => spreadOverlappingMarkers(allStops), [allStops])
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([])
   const [routeDistance, setRouteDistance] = useState(0)
   const [isRouting, setIsRouting] = useState(false)
+  // Only refetch the route when the waypoints change, not on edits to buyer/address text
+  const waypointsKey = useMemo(
+    () => JSON.stringify(allStops.filter((stop) => stop.coordinates).map((stop) => stop.coordinates)),
+    [allStops],
+  )
 
   useEffect(() => {
     let isActive = true
-    const validStops = allStops.filter((stop) => stop.coordinates)
+    const waypoints = JSON.parse(waypointsKey) as [number, number][]
 
     setRouteCoordinates([])
     setRouteDistance(0)
 
-    if (validStops.length < 2) {
+    if (waypoints.length < 2) {
       setIsRouting(false)
       return () => {
         isActive = false
@@ -100,7 +125,6 @@ export default function RouteMap({ stops, onRouteUpdate, isTruckRoute }: RouteMa
     }
 
     setIsRouting(true)
-    const waypoints = validStops.map((stop) => stop.coordinates as [number, number])
 
     fetch("/api/calculate-route", {
       method: "POST",
@@ -134,7 +158,7 @@ export default function RouteMap({ stops, onRouteUpdate, isTruckRoute }: RouteMa
     return () => {
       isActive = false
     }
-  }, [allStops, isTruckRoute])
+  }, [waypointsKey, isTruckRoute])
 
   useEffect(() => {
     onRouteUpdate?.(routeDistance, isRouting)
@@ -160,14 +184,15 @@ export default function RouteMap({ stops, onRouteUpdate, isTruckRoute }: RouteMa
         )}
 
         {allStops.map((stop, index) => {
-          if (!stop.coordinates) return null
+          const position = markerPositions[index]
+          if (!position) return null
           const isStarting = index === 0
 
           return (
             <MapMarker
               key={stop.id}
-              longitude={stop.coordinates[0]}
-              latitude={stop.coordinates[1]}
+              longitude={position[0]}
+              latitude={position[1]}
             >
               <MarkerContent className="group">
                 <div

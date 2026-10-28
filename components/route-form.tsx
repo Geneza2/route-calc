@@ -50,58 +50,25 @@ const STARTING_POINT = {
 }
 
 const PHONE_TOKEN_REGEX = /\b\+?\d[\d\s/-]{6,}\b/g
-const ADDRESS_LETTER_REGEX = /[A-Za-z\u00C0-\u024F\u0400-\u04FF]/
+// At least two letters, so placeholders like "x" or "-" are not treated as an address
+const ADDRESS_LETTER_REGEX = /[A-Za-z\u00C0-\u024F\u0400-\u04FF].*[A-Za-z\u00C0-\u024F\u0400-\u04FF]/
+const HOUSE_NUMBER_REGEX = /\d|\bbb\b/i
 
+// The address column often mixes street, phone and contact name ("Radnicka 4, Jasmina 062/41-0434").
+// Returns "" when nothing address-like is left (e.g. the cell only holds a phone number).
 const sanitizeAddressInput = (raw: string) => {
   if (!raw) return ""
-  const withoutPhones = raw.replace(PHONE_TOKEN_REGEX, " ").replace(/\s+/g, " ").trim()
-  const parts = withoutPhones
+  const parts = raw
     .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-  const filtered = parts.filter((part) => ADDRESS_LETTER_REGEX.test(part))
-  return filtered.length > 0 ? filtered.join(", ") : raw.trim()
-}
-
-const offsetDuplicateCoordinates = (stopsToOffset: Stop[]): Stop[] => {
-  const coordinateMap = new Map<string, Stop[]>()
-
-  // Group stops by coordinates
-  stopsToOffset.forEach((stop) => {
-    if (stop.coordinates) {
-      const key = `${stop.coordinates[0]},${stop.coordinates[1]}`
-      if (!coordinateMap.has(key)) {
-        coordinateMap.set(key, [])
-      }
-      coordinateMap.get(key)!.push(stop)
-    }
-  })
-
-  // Offset stops with duplicate coordinates
-  const offsetStops = [...stopsToOffset]
-  coordinateMap.forEach((stops, key) => {
-    if (stops.length > 1) {
-      console.log(`[v0] Found ${stops.length} stops at same coordinates:`, key)
-      stops.forEach((stop, index) => {
-        if (index > 0) {
-          // Add small offset (approximately 100-200 meters)
-          const offsetLon = (Math.random() - 0.5) * 0.003
-          const offsetLat = (Math.random() - 0.5) * 0.003
-          const stopIndex = offsetStops.findIndex((s) => s.id === stop.id)
-          if (stopIndex !== -1 && offsetStops[stopIndex].coordinates) {
-            const [lon, lat] = offsetStops[stopIndex].coordinates!
-            offsetStops[stopIndex] = {
-              ...offsetStops[stopIndex],
-              coordinates: [lon + offsetLon, lat + offsetLat] as [number, number],
-            }
-            console.log(`[v0] Offset stop ${stop.buyer} by [${offsetLon.toFixed(4)}, ${offsetLat.toFixed(4)}]`)
-          }
-        }
-      })
-    }
-  })
-
-  return offsetStops
+    .map((part) => {
+      const stripped = part.replace(PHONE_TOKEN_REGEX, " ").replace(/\s+/g, " ").trim()
+      const hadPhone = stripped !== part.replace(/\s+/g, " ").trim()
+      // Words next to a phone number are a contact name unless they carry a house number
+      return hadPhone && !HOUSE_NUMBER_REGEX.test(stripped) ? "" : stripped
+    })
+    .filter((part) => ADDRESS_LETTER_REGEX.test(part))
+  const withNumber = parts.find((part) => HOUSE_NUMBER_REGEX.test(part))
+  return withNumber ?? parts.join(", ")
 }
 
 export default function RouteForm({
@@ -140,6 +107,9 @@ export default function RouteForm({
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [isImporting, setIsImporting] = useState(false)
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0 })
+  const [importSummary, setImportSummary] = useState<{ imported: number; skipped: number; failed: number } | null>(
+    null,
+  )
 
   useEffect(() => {
     setIsLoadingTowns(true)
@@ -202,17 +172,7 @@ export default function RouteForm({
         coordinates = selectedAddress.coordinates
       } else {
         console.log("[v0] Geocoding address:", formData.address)
-        const sanitizedAddress = sanitizeAddressInput(formData.address)
-        coordinates = await geocodeWithFallback(sanitizedAddress, formData.town)
-        if (!coordinates) {
-          const townFallback = townOptions.find(
-            (option) => option.name.trim().toLowerCase() === formData.town.trim().toLowerCase(),
-          )?.coordinates
-          if (townFallback) {
-            console.log("[v0] Using town fallback coordinates:", townFallback)
-            coordinates = townFallback
-          }
-        }
+        coordinates = await geocodeWithFallback(sanitizeAddressInput(formData.address), formData.town)
         console.log("[v0] Geocoded coordinates:", coordinates)
       }
 
@@ -242,14 +202,11 @@ export default function RouteForm({
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    // Reset so selecting the same file again still triggers onChange
+    e.target.value = ""
     if (!file) return
 
     console.log("[v0] Reading Excel file:", file.name)
-
-    if (stops.length > 0) {
-      console.log("[v0] Clearing", stops.length, "existing stops before importing new file")
-      onClearRoute()
-    }
 
     const reader = new FileReader()
     reader.onload = (event) => {
@@ -267,11 +224,15 @@ export default function RouteForm({
         const range = XLSX.utils.decode_range(ref)
         const headerRow = range.s.r
         const columns: string[] = []
+        const headerCounts = new Map<string, number>()
 
         for (let c = range.s.c; c <= range.e.c; c++) {
           const cell = worksheet[XLSX.utils.encode_cell({ r: headerRow, c })]
-          const header = cell?.v?.toString().trim()
-          columns.push(header || `Column ${XLSX.utils.encode_col(c)}`)
+          const header = cell?.v?.toString().trim() || `Column ${XLSX.utils.encode_col(c)}`
+          // Duplicate headers would overwrite each other in sheet_to_json
+          const count = headerCounts.get(header) ?? 0
+          headerCounts.set(header, count + 1)
+          columns.push(count === 0 ? header : `${header} (${count + 1})`)
         }
 
         const jsonData = XLSX.utils.sheet_to_json(worksheet, {
@@ -294,16 +255,27 @@ export default function RouteForm({
     reader.readAsBinaryString(file)
   }
 
-  const geocodeWithFallback = async (address: string, town: string) => {
-    const fullAddress = `${address}, ${town}, Serbia`
-    let coordinates = await geocodeAddress(fullAddress)
+  const findUniqueTownCoordinates = (town: string) => {
+    const name = town.trim().toLowerCase()
+    const matches = townOptions.filter((option) => option.name.trim().toLowerCase() === name)
+    // Several places share a name (e.g. villages), let Nominatim rank those
+    return matches.length === 1 ? matches[0].coordinates : undefined
+  }
 
-    if (!coordinates || (coordinates[0] === 0 && coordinates[1] === 0)) {
-      console.log("[v0] Falling back to town geocode:", town)
-      coordinates = await geocodeAddress(`${town}, Serbia`)
+  const geocodeWithFallback = async (address: string, town: string) => {
+    if (address) {
+      const coordinates = await geocodeAddress(`${address}, ${town}, Serbia`)
+      if (coordinates) return coordinates
     }
 
-    return coordinates
+    const knownTown = findUniqueTownCoordinates(town)
+    if (knownTown) {
+      console.log("[v0] Using preloaded town coordinates:", town)
+      return knownTown
+    }
+
+    console.log("[v0] Falling back to town geocode:", town)
+    return geocodeAddress(`${town}, Serbia`)
   }
 
   const calculateStraightLineDistance = (coord1: [number, number], coord2: [number, number]): number => {
@@ -369,6 +341,13 @@ export default function RouteForm({
   const handleColumnMappingComplete = async (mapping: Record<string, string>) => {
     console.log("[v0] Column mapping:", mapping)
     setShowColumnMapping(false)
+
+    if (stops.length > 0) {
+      console.log("[v0] Clearing", stops.length, "existing stops before importing new file")
+      onClearRoute()
+    }
+
+    setImportSummary(null)
     setIsImporting(true)
     setImportProgress({ current: 0, total: excelData.length })
 
@@ -376,65 +355,56 @@ export default function RouteForm({
     let skippedCount = 0
     let failedCount = 0
     const importedStops: Stop[] = []
+    const seenStops = new Set<string>()
 
     try {
       for (let index = 0; index < excelData.length; index++) {
         const row = excelData[index]
+        // Address is optional; product continuation rows have no buyer/town and are skipped
         const stopData = {
-          buyer: row[mapping.buyer]?.toString().trim() || "",
-          town: row[mapping.town]?.toString().trim() || "",
-          address: row[mapping.address]?.toString().trim() || "",
+          buyer: mapping.buyer ? row[mapping.buyer]?.toString().trim() || "" : "",
+          town: mapping.town ? row[mapping.town]?.toString().trim() || "" : "",
+          address: mapping.address ? row[mapping.address]?.toString().trim() || "" : "",
         }
-        const sanitizedAddress = sanitizeAddressInput(stopData.address)
+        setImportProgress({ current: index + 1, total: excelData.length })
 
-        if (!stopData.buyer || !stopData.town || !stopData.address) {
-          console.log("[v0] Skipping empty row:", stopData)
+        if (!stopData.buyer || !stopData.town) {
+          console.log("[v0] Skipping row without buyer or town:", stopData)
           skippedCount++
-          setImportProgress({ current: index + 1, total: excelData.length })
           continue
         }
+
+        const stopKey = [stopData.buyer, stopData.town, stopData.address].join("|").toLowerCase()
+        if (seenStops.has(stopKey)) {
+          console.log("[v0] Skipping duplicate stop:", stopData)
+          skippedCount++
+          continue
+        }
+        seenStops.add(stopKey)
 
         console.log("[v0] Processing Excel row:", stopData)
         processedCount++
 
         try {
-          const fullAddress = `${sanitizedAddress || stopData.address}, ${stopData.town}, Serbia`
-          console.log(`[v0] Geocoding address ${processedCount}:`, fullAddress)
-          let coordinates = await geocodeWithFallback(sanitizedAddress || stopData.address, stopData.town)
+          const coordinates = await geocodeWithFallback(sanitizeAddressInput(stopData.address), stopData.town)
 
           if (!coordinates) {
-            const townFallback = townOptions.find(
-              (option) => option.name.trim().toLowerCase() === stopData.town.trim().toLowerCase(),
-            )?.coordinates
-            if (townFallback) {
-              console.log(`[v0] Using town fallback for ${processedCount}:`, townFallback)
-              coordinates = townFallback
-            }
-          }
-
-          if (!coordinates || (coordinates[0] === 0 && coordinates[1] === 0)) {
-            console.error(`[v0] Failed to geocode address ${processedCount}:`, fullAddress)
+            console.error(`[v0] Failed to geocode row ${processedCount}:`, stopData)
             failedCount++
-            setImportProgress({ current: index + 1, total: excelData.length })
             continue
           }
 
           console.log(`[v0] Successfully geocoded ${processedCount}:`, coordinates)
 
-          const newStop: Stop = {
+          importedStops.push({
             id: Date.now().toString() + Math.random(),
             ...stopData,
             coordinates,
             distanceFromPrevious: undefined,
-          }
-
-          importedStops.push(newStop)
-          setImportProgress({ current: index + 1, total: excelData.length })
-          await new Promise((resolve) => setTimeout(resolve, 300)) // Increased delay to avoid rate limiting
+          })
         } catch (error) {
           console.error(`[v0] Error processing Excel row ${processedCount}:`, error)
           failedCount++
-          setImportProgress({ current: index + 1, total: excelData.length })
         }
       }
     } finally {
@@ -442,15 +412,14 @@ export default function RouteForm({
     }
 
     console.log(
-      `[v0] Import complete: ${processedCount} rows processed, ${importedStops.length} imported, ${skippedCount} skipped (empty), ${failedCount} failed (geocoding)`,
+      `[v0] Import complete: ${processedCount} rows processed, ${importedStops.length} imported, ${skippedCount} skipped, ${failedCount} failed (geocoding)`,
     )
+    setImportSummary({ imported: importedStops.length, skipped: skippedCount, failed: failedCount })
 
     if (importedStops.length > 0) {
-      console.log("[v0] Offsetting duplicate coordinates")
-      const offsetStops = offsetDuplicateCoordinates(importedStops)
-
+      // Stops keep their real coordinates for routing; overlapping markers are spread out by the map
       console.log("[v0] Optimizing route order for imported stops")
-      const optimizedStops = optimizeRouteOrder(offsetStops)
+      const optimizedStops = optimizeRouteOrder(importedStops)
 
       // Add all optimized stops
       for (const stop of optimizedStops) {
@@ -501,17 +470,7 @@ export default function RouteForm({
     setIsSubmitting(true)
 
     try {
-      const sanitizedAddress = sanitizeAddressInput(editFormData.address)
-      let coordinates = await geocodeWithFallback(sanitizedAddress, editFormData.town)
-      if (!coordinates) {
-        const townFallback = townOptions.find(
-          (option) => option.name.trim().toLowerCase() === editFormData.town.trim().toLowerCase(),
-        )?.coordinates
-        if (townFallback) {
-          console.log("[v0] Using town fallback coordinates:", townFallback)
-          coordinates = townFallback
-        }
-      }
+      const coordinates = await geocodeWithFallback(sanitizeAddressInput(editFormData.address), editFormData.town)
 
       const actualIndex = index - 1 // Adjust for starting point
       const newStops = [...stops]
@@ -906,6 +865,21 @@ export default function RouteForm({
               <div className="h-full bg-primary transition-all" style={{ width: `${importPercent}%` }} />
             </div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{importPercent}%</div>
+          </div>
+        )}
+        {!isImporting && importSummary && (
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border bg-muted/30 p-3 text-xs">
+            <span>
+              {t("importedCount")}: <span className="font-medium tabular-nums">{importSummary.imported}</span>
+            </span>
+            <span className="text-muted-foreground">
+              {t("skippedCount")}: <span className="tabular-nums">{importSummary.skipped}</span>
+            </span>
+            {importSummary.failed > 0 && (
+              <span className="text-destructive">
+                {t("failedCount")}: <span className="tabular-nums">{importSummary.failed}</span>
+              </span>
+            )}
           </div>
         )}
       </div>
