@@ -34,12 +34,13 @@ const SERBIA_BOUNDS: MapLibreGL.LngLatBoundsLike = [
 const MARKER_SPREAD_DEG = 0.0002
 
 const spreadOverlappingMarkers = (stops: Stop[]) => {
-  const seen = new Map<string, number>()
+  // Plain object: `Map` in this file is the map component, not the JS Map
+  const seen: Record<string, number> = {}
   return stops.map((stop) => {
     if (!stop.coordinates) return undefined
     const key = stop.coordinates.join(",")
-    const count = seen.get(key) ?? 0
-    seen.set(key, count + 1)
+    const count = seen[key] ?? 0
+    seen[key] = count + 1
     if (count === 0) return stop.coordinates
     const angle = (count * 2 * Math.PI) / 6
     return [
