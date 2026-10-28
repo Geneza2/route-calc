@@ -52,6 +52,7 @@ const translations = {
     cancel: "Otkaži",
     importStops: "Uvezi stajališta",
     startingPoint: "Polazna tačka",
+    firstStop: "Prva stanica",
   },
   en: {
     routeOps: "Route Ops",
@@ -105,6 +106,7 @@ const translations = {
     cancel: "Cancel",
     importStops: "Import stops",
     startingPoint: "Starting Point",
+    firstStop: "First stop",
   },
 } as const;
 

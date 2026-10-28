@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/map"
 import { cn } from "@/lib/utils"
 import { t } from "@/lib/i18n"
-import { STARTING_POINT } from "@/lib/constants"
+import { FIXED_STOPS } from "@/lib/constants"
 
 interface RouteMapProps {
   stops: Stop[]
@@ -100,7 +100,7 @@ function RouteViewport({ stops }: { stops: Stop[] }) {
 }
 
 export default function RouteMap({ stops, onRouteUpdate, isTruckRoute }: RouteMapProps) {
-  const allStops = useMemo(() => [STARTING_POINT, ...stops], [stops])
+  const allStops = useMemo(() => [...FIXED_STOPS, ...stops], [stops])
   const markerPositions = useMemo(() => spreadOverlappingMarkers(allStops), [allStops])
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([])
   const [routeDistance, setRouteDistance] = useState(0)

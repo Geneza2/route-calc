@@ -10,6 +10,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { t } from "@/lib/i18n"
+import { FIRST_STOP, FIXED_STOPS } from "@/lib/constants"
 import type { Stop } from "./route-manager"
 import { geocodeAddress } from "@/lib/osm"
 import * as XLSX from "xlsx"
@@ -41,13 +42,8 @@ interface TownOption {
   postcode?: string
 }
 
-const STARTING_POINT = {
-  id: "starting-point",
-  buyer: t("startingPoint"),
-  town: "Kanjiža",
-  address: "Put narodnih heroja 17, Kanjiža",
-  coordinates: [20.0597, 46.0697] as [number, number],
-}
+// Starting point and the fixed first stop are listed before user stops and cannot be edited or moved
+const FIXED_COUNT = FIXED_STOPS.length
 
 const PHONE_TOKEN_REGEX = /\b\+?\d[\d\s/-]{6,}\b/g
 // At least two letters, so placeholders like "x" or "-" are not treated as an address
@@ -306,7 +302,8 @@ export default function RouteForm({
 
     const unvisited = [...stopsToOptimize]
     const optimized: Stop[] = []
-    let currentPosition = STARTING_POINT.coordinates
+    // Remaining stops are ordered from the fixed first stop onwards
+    let currentPosition = FIRST_STOP.coordinates
 
     while (unvisited.length > 0) {
       let nearestIndex = 0
@@ -438,18 +435,18 @@ export default function RouteForm({
       ? addresses
       : addresses.filter((addr) => addr.address.toLowerCase().includes(addressSearchTerm))
 
-  const allStops = [STARTING_POINT, ...stops]
+  const allStops = [...FIXED_STOPS, ...stops]
   const importPercent =
     importProgress.total > 0 ? Math.round((importProgress.current / importProgress.total) * 100) : 0
 
   const removeStop = (index: number) => {
-    if (index === 0) return // Can't remove starting point
-    const newStops = stops.filter((_, i) => i !== index - 1)
+    if (index < FIXED_COUNT) return // Can't remove fixed stops
+    const newStops = stops.filter((_, i) => i !== index - FIXED_COUNT)
     onReorderStops(newStops)
   }
 
   const startEditing = (stop: Stop, index: number) => {
-    if (index === 0) return // Can't edit starting point
+    if (index < FIXED_COUNT) return // Can't edit fixed stops
     console.log("[v0] Starting edit for stop:", stop.id)
     setEditingStopId(stop.id)
     setEditFormData({
@@ -472,7 +469,7 @@ export default function RouteForm({
     try {
       const coordinates = await geocodeWithFallback(sanitizeAddressInput(editFormData.address), editFormData.town)
 
-      const actualIndex = index - 1 // Adjust for starting point
+      const actualIndex = index - FIXED_COUNT // Adjust for fixed stops
       const newStops = [...stops]
 
       newStops[actualIndex] = {
@@ -496,7 +493,7 @@ export default function RouteForm({
   }
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
-    if (index === 0) return // Can't drag starting point
+    if (index < FIXED_COUNT) return // Can't drag fixed stops
     console.log("[v0] Drag start:", index)
     setDraggedIndex(index)
     e.dataTransfer.effectAllowed = "move"
@@ -504,19 +501,19 @@ export default function RouteForm({
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault()
-    if (index === 0) return // Can't drop on starting point
+    if (index < FIXED_COUNT) return // Can't drop on fixed stops
     e.dataTransfer.dropEffect = "move"
   }
 
   const handleDrop = (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault()
-    if (dropIndex === 0 || draggedIndex === null || draggedIndex === 0) return
+    if (dropIndex < FIXED_COUNT || draggedIndex === null || draggedIndex < FIXED_COUNT) return
 
     console.log("[v0] Drop:", { from: draggedIndex, to: dropIndex })
 
     const newStops = [...stops]
-    const draggedActualIndex = draggedIndex - 1 // Adjust for starting point
-    const dropActualIndex = dropIndex - 1 // Adjust for starting point
+    const draggedActualIndex = draggedIndex - FIXED_COUNT // Adjust for fixed stops
+    const dropActualIndex = dropIndex - FIXED_COUNT // Adjust for fixed stops
 
     const [draggedItem] = newStops.splice(draggedActualIndex, 1)
     newStops.splice(dropActualIndex, 0, draggedItem)
@@ -563,18 +560,18 @@ export default function RouteForm({
         {allStops.map((stop, index) => (
           <div
             key={stop.id}
-            draggable={index > 0}
+            draggable={index >= FIXED_COUNT}
             onDragStart={(e) => handleDragStart(e, index)}
             onDragOver={(e) => handleDragOver(e, index)}
             onDrop={(e) => handleDrop(e, index)}
             onDragEnd={handleDragEnd}
             className={cn(
               "flex items-center gap-3 rounded-lg border bg-background/90 p-3 shadow-sm transition-colors",
-              index > 0 && "cursor-move hover:bg-muted/40",
+              index >= FIXED_COUNT && "cursor-move hover:bg-muted/40",
               draggedIndex === index && "opacity-60",
             )}
           >
-            {index > 0 ? (
+            {index >= FIXED_COUNT ? (
               <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             ) : (
               <div className="w-4 flex-shrink-0" />
@@ -650,7 +647,7 @@ export default function RouteForm({
                   <div className="text-sm text-muted-foreground truncate">{stop.address}</div>
                 </div>
 
-                {index > 0 && (
+                {index >= FIXED_COUNT && (
                   <div className="flex gap-1 flex-shrink-0">
                     <Button
                       variant="ghost"
@@ -671,7 +668,7 @@ export default function RouteForm({
                   </div>
                 )}
 
-                {index === 0 && <div className="w-[72px] flex-shrink-0" />}
+                {index < FIXED_COUNT && <div className="w-[72px] flex-shrink-0" />}
               </>
             )}
           </div>
