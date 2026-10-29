@@ -37,15 +37,16 @@ function useMap() {
 }
 
 const defaultStyles = {
-  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+  // OpenFreeMap tiles carry "name:sr-Latn" for Serbian places and streets; Carto tiles only had Cyrillic names
+  dark: "https://tiles.openfreemap.org/styles/dark",
+  light: "https://tiles.openfreemap.org/styles/positron",
 };
 
 type MapStyleOption = string | MapLibreGL.StyleSpecification;
 
 type MapProps = {
   children?: ReactNode;
-  /** Custom map styles for light and dark themes. Overrides the default Carto styles. */
+  /** Custom map styles for light and dark themes. Overrides the default OpenFreeMap styles. */
   styles?: {
     light?: MapStyleOption;
     dark?: MapStyleOption;
@@ -101,7 +102,7 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
     const style = map.getStyle();
     if (!style?.layers) return;
 
-    // Carto tiles have no "name:sr-Latn", so fall back to the English and local names instead of rendering empty labels
+    // A few features (mostly POIs) have no "name:sr-Latn"; "name:latin" is a transliteration without diacritics
     const latinTextField = [
       "coalesce",
       ["get", "name:sr-Latn"],
