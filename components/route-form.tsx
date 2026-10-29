@@ -426,9 +426,10 @@ export default function RouteForm({
   }
 
   const townSearchTerm = townSearch.trim().toLowerCase()
-  const filteredTowns = townOptions.filter((town) =>
-    town.name.toLowerCase().includes(townSearchTerm),
-  )
+  // Thousands of places are preloaded; rendering only the first matches keeps the dropdown responsive
+  const filteredTowns = townOptions
+    .filter((town) => town.name.toLowerCase().includes(townSearchTerm))
+    .slice(0, 100)
   const addressSearchTerm = addressSearch.trim().toLowerCase()
   const filteredAddresses =
     addressSearchTerm.length === 0

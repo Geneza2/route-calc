@@ -101,7 +101,14 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
     const style = map.getStyle();
     if (!style?.layers) return;
 
-    const latinTextField = ["get", "name:sr-Latn"];
+    // Carto tiles have no "name:sr-Latn", so fall back to the English and local names instead of rendering empty labels
+    const latinTextField = [
+      "coalesce",
+      ["get", "name:sr-Latn"],
+      ["get", "name:latin"],
+      ["get", "name:en"],
+      ["get", "name"],
+    ];
 
     const shouldOverrideTextField = (textField: unknown) => {
       if (!textField) return false;
