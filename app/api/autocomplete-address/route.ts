@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { nearViewbox, parseNear } from "@/lib/near"
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 const OVERPASS_URL = "https://overpass-api.de/api/interpreter"
@@ -36,7 +37,7 @@ const parseBounds = (bbox: string[]): TownBounds | null => {
   return { south, west, north, east }
 }
 
-const fetchTownBounds = async (town: string): Promise<TownBounds | null> => {
+const fetchTownBounds = async (town: string, near?: [number, number]): Promise<TownBounds | null> => {
   const params = new URLSearchParams({
     q: `${town}, Serbia`,
     format: "jsonv2",
@@ -45,6 +46,11 @@ const fetchTownBounds = async (town: string): Promise<TownBounds | null> => {
     countrycodes: "rs",
     "accept-language": "sr-Latn",
   })
+  // Several towns share a name; the chosen place's coordinates pick the right one
+  if (near) {
+    params.set("viewbox", nearViewbox(near))
+    params.set("bounded", "1")
+  }
   const url = `${NOMINATIM_URL}?${params.toString()}`
   console.log("[v0] Fetching town bounds from Nominatim:", url)
 
@@ -138,7 +144,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Town parameter is required" }, { status: 400 })
     }
 
-    const bounds = await fetchTownBounds(town)
+    const bounds = await fetchTownBounds(town, parseNear(searchParams.get("near")))
     if (!bounds) {
       return NextResponse.json({ addresses: [] })
     }

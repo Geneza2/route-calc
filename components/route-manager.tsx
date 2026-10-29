@@ -7,12 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Truck } from "lucide-react";
 import { t } from "@/lib/i18n";
+import type { Place } from "@/lib/places";
 
 export interface Stop {
   id: string;
   buyer: string;
   town: string;
   address: string;
+  // The place the town name refers to, when known; tells namesake towns apart
+  place?: Place;
   coordinates?: [number, number];
   distanceFromPrevious?: number;
 }

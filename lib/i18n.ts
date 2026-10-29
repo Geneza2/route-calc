@@ -53,6 +53,12 @@ const translations = {
     importStops: "Uvezi stajališta",
     startingPoint: "Polazna tačka",
     firstStop: "Prva stanica",
+    chooseMunicipalityTitle: "Izaberite opštinu",
+    chooseMunicipalityDescription:
+      "Više mesta u Srbiji ima isti naziv. Izaberite na koje mesto se odnosi svaki naziv iz fajla.",
+    selectMunicipalityPlaceholder: "Izaberite opštinu...",
+    stopsInFile: "stajališta",
+    continueImport: "Nastavi uvoz",
   },
   en: {
     routeOps: "Route Ops",
@@ -107,6 +113,12 @@ const translations = {
     importStops: "Import stops",
     startingPoint: "Starting Point",
     firstStop: "First stop",
+    chooseMunicipalityTitle: "Choose municipality",
+    chooseMunicipalityDescription:
+      "Several places in Serbia share a name. Choose which place each town name in the file refers to.",
+    selectMunicipalityPlaceholder: "Select municipality...",
+    stopsInFile: "stops",
+    continueImport: "Continue import",
   },
 } as const;
 

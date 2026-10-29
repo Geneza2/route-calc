@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { nearViewbox, parseNear } from "@/lib/near"
 
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 const USER_AGENT = "truck-route-calculator"
@@ -24,6 +25,11 @@ export async function GET(request: NextRequest) {
       countrycodes: "rs",
       "accept-language": "sr-Latn",
     })
+    const near = parseNear(searchParams.get("near"))
+    if (near) {
+      params.set("viewbox", nearViewbox(near))
+      params.set("bounded", "1")
+    }
     const url = `${NOMINATIM_URL}?${params.toString()}`
 
     console.log("[v0] Geocoding:", url)

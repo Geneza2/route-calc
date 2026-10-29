@@ -1,7 +1,7 @@
 ﻿"use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +15,16 @@ import type { Stop } from "./route-manager"
 import { geocodeAddress } from "@/lib/osm"
 import * as XLSX from "xlsx"
 import { ColumnMappingDialog } from "./column-mapping-dialog"
+import { type TownChoice, TownChoiceDialog } from "./town-choice-dialog"
+import {
+  type Place,
+  findPlacesByName,
+  loadTownChoices,
+  normalizeTownName,
+  placeKey,
+  placeRegion,
+  saveTownChoices,
+} from "@/lib/places"
 
 interface RouteFormProps {
   onAddStop: (stop: Stop) => void
@@ -34,12 +44,6 @@ interface AddressOption {
 
 interface ExcelRow {
   [key: string]: string | number
-}
-
-interface TownOption {
-  name: string
-  coordinates: [number, number]
-  postcode?: string
 }
 
 // Starting point and the fixed first stop are listed before user stops and cannot be edited or moved
@@ -83,7 +87,8 @@ export default function RouteForm({
 
   const [townOpen, setTownOpen] = useState(false)
   const [townSearch, setTownSearch] = useState("")
-  const [townOptions, setTownOptions] = useState<TownOption[]>([])
+  const [townOptions, setTownOptions] = useState<Place[]>([])
+  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null)
   const [isLoadingTowns, setIsLoadingTowns] = useState(false)
   const [addressOpen, setAddressOpen] = useState(false)
   const [addressSearch, setAddressSearch] = useState("")
@@ -106,6 +111,8 @@ export default function RouteForm({
   const [importSummary, setImportSummary] = useState<{ imported: number; skipped: number; failed: number } | null>(
     null,
   )
+  const [townChoices, setTownChoices] = useState<TownChoice[] | null>(null)
+  const townChoicesResolver = useRef<((choices: Map<string, Place> | null) => void) | null>(null)
 
   useEffect(() => {
     setIsLoadingTowns(true)
@@ -128,14 +135,15 @@ export default function RouteForm({
   }, [])
 
   useEffect(() => {
-    if (!formData.town) {
+    if (!selectedPlace) {
       setAddresses([])
       return
     }
 
-    console.log("[v0] Preloading streets for town:", formData.town)
+    console.log("[v0] Preloading streets for town:", selectedPlace.name, placeRegion(selectedPlace))
     setIsLoadingAddresses(true)
-    fetch(`/api/autocomplete-address?town=${encodeURIComponent(formData.town)}`)
+    const params = new URLSearchParams({ town: selectedPlace.name, near: selectedPlace.coordinates.join(",") })
+    fetch(`/api/autocomplete-address?${params.toString()}`)
       .then((res) => res.json())
       .then((data) => {
         console.log("[v0] Streets received:", data.addresses?.length || 0)
@@ -152,7 +160,7 @@ export default function RouteForm({
       .finally(() => {
         setIsLoadingAddresses(false)
       })
-  }, [formData.town])
+  }, [selectedPlace])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -168,13 +176,18 @@ export default function RouteForm({
         coordinates = selectedAddress.coordinates
       } else {
         console.log("[v0] Geocoding address:", formData.address)
-        coordinates = await geocodeWithFallback(sanitizeAddressInput(formData.address), formData.town)
+        coordinates = await geocodeWithFallback(
+          sanitizeAddressInput(formData.address),
+          formData.town,
+          selectedPlace ?? undefined,
+        )
         console.log("[v0] Geocoded coordinates:", coordinates)
       }
 
       const newStop: Stop = {
         id: Date.now().toString() + Math.random(),
         ...formData,
+        place: selectedPlace ?? undefined,
         coordinates,
         distanceFromPrevious: undefined,
       }
@@ -187,6 +200,7 @@ export default function RouteForm({
         town: "",
         address: "",
       })
+      setSelectedPlace(null)
       setTownSearch("")
       setAddressSearch("")
     } catch (error) {
@@ -251,23 +265,25 @@ export default function RouteForm({
     reader.readAsBinaryString(file)
   }
 
-  const findUniqueTownCoordinates = (town: string) => {
-    const name = town.trim().toLowerCase()
-    const matches = townOptions.filter((option) => option.name.trim().toLowerCase() === name)
-    // Several places share a name (e.g. villages), let Nominatim rank those
-    return matches.length === 1 ? matches[0].coordinates : undefined
+  const isAmbiguousTown = (town: string) => findPlacesByName(townOptions, town).length > 1
+
+  // The only place with this name, or the municipality picked last time for an ambiguous name
+  const resolvePlace = (town: string) => {
+    const matches = findPlacesByName(townOptions, town)
+    if (matches.length === 1) return matches[0]
+    const remembered = loadTownChoices()[normalizeTownName(town)]
+    return matches.find((place) => placeKey(place) === remembered)
   }
 
-  const geocodeWithFallback = async (address: string, town: string) => {
+  const geocodeWithFallback = async (address: string, town: string, place = resolvePlace(town)) => {
     if (address) {
-      const coordinates = await geocodeAddress(`${address}, ${town}, Serbia`)
+      const coordinates = await geocodeAddress(`${address}, ${town}, Serbia`, place?.coordinates)
       if (coordinates) return coordinates
     }
 
-    const knownTown = findUniqueTownCoordinates(town)
-    if (knownTown) {
-      console.log("[v0] Using preloaded town coordinates:", town)
-      return knownTown
+    if (place) {
+      console.log("[v0] Using preloaded town coordinates:", town, placeRegion(place))
+      return place.coordinates
     }
 
     console.log("[v0] Falling back to town geocode:", town)
@@ -335,9 +351,77 @@ export default function RouteForm({
     return optimized
   }
 
+  // Resolves once the user confirms (or cancels) the municipality dialog
+  const askTownChoices = (choices: TownChoice[]) =>
+    new Promise<Map<string, Place> | null>((resolve) => {
+      townChoicesResolver.current = resolve
+      setTownChoices(choices)
+    })
+
+  const finishTownChoices = (choices: Map<string, Place> | null) => {
+    townChoicesResolver.current?.(choices)
+    townChoicesResolver.current = null
+    setTownChoices(null)
+  }
+
   const handleColumnMappingComplete = async (mapping: Record<string, string>) => {
     console.log("[v0] Column mapping:", mapping)
     setShowColumnMapping(false)
+
+    let processedCount = 0
+    let skippedCount = 0
+    let failedCount = 0
+    const importedStops: Stop[] = []
+    const seenStops = new Set<string>()
+    const rowsToImport: { buyer: string; town: string; address: string }[] = []
+
+    for (const row of excelData) {
+      // Address is optional; product continuation rows have no buyer/town and are skipped
+      const stopData = {
+        buyer: mapping.buyer ? row[mapping.buyer]?.toString().trim() || "" : "",
+        town: mapping.town ? row[mapping.town]?.toString().trim() || "" : "",
+        address: mapping.address ? row[mapping.address]?.toString().trim() || "" : "",
+      }
+
+      if (!stopData.buyer || !stopData.town) {
+        console.log("[v0] Skipping row without buyer or town:", stopData)
+        skippedCount++
+        continue
+      }
+
+      const stopKey = [stopData.buyer, stopData.town, stopData.address].join("|").toLowerCase()
+      if (seenStops.has(stopKey)) {
+        console.log("[v0] Skipping duplicate stop:", stopData)
+        skippedCount++
+        continue
+      }
+      seenStops.add(stopKey)
+      rowsToImport.push(stopData)
+    }
+
+    // Town names shared by several places need the user to say which municipality is meant
+    const ambiguousTowns = new Map<string, TownChoice>()
+    for (const stopData of rowsToImport) {
+      const key = normalizeTownName(stopData.town)
+      const existing = ambiguousTowns.get(key)
+      if (existing) {
+        existing.stopCount++
+        continue
+      }
+      const options = findPlacesByName(townOptions, stopData.town)
+      if (options.length > 1) ambiguousTowns.set(key, { name: stopData.town, options, stopCount: 1 })
+    }
+
+    let chosenPlaces = new Map<string, Place>()
+    if (ambiguousTowns.size > 0) {
+      const choices = await askTownChoices([...ambiguousTowns.values()])
+      if (!choices) {
+        console.log("[v0] Import cancelled while choosing municipalities")
+        return
+      }
+      saveTownChoices(choices)
+      chosenPlaces = new Map([...choices].map(([name, place]) => [normalizeTownName(name), place]))
+    }
 
     if (stops.length > 0) {
       console.log("[v0] Clearing", stops.length, "existing stops before importing new file")
@@ -346,44 +430,19 @@ export default function RouteForm({
 
     setImportSummary(null)
     setIsImporting(true)
-    setImportProgress({ current: 0, total: excelData.length })
-
-    let processedCount = 0
-    let skippedCount = 0
-    let failedCount = 0
-    const importedStops: Stop[] = []
-    const seenStops = new Set<string>()
+    setImportProgress({ current: 0, total: rowsToImport.length })
 
     try {
-      for (let index = 0; index < excelData.length; index++) {
-        const row = excelData[index]
-        // Address is optional; product continuation rows have no buyer/town and are skipped
-        const stopData = {
-          buyer: mapping.buyer ? row[mapping.buyer]?.toString().trim() || "" : "",
-          town: mapping.town ? row[mapping.town]?.toString().trim() || "" : "",
-          address: mapping.address ? row[mapping.address]?.toString().trim() || "" : "",
-        }
-        setImportProgress({ current: index + 1, total: excelData.length })
-
-        if (!stopData.buyer || !stopData.town) {
-          console.log("[v0] Skipping row without buyer or town:", stopData)
-          skippedCount++
-          continue
-        }
-
-        const stopKey = [stopData.buyer, stopData.town, stopData.address].join("|").toLowerCase()
-        if (seenStops.has(stopKey)) {
-          console.log("[v0] Skipping duplicate stop:", stopData)
-          skippedCount++
-          continue
-        }
-        seenStops.add(stopKey)
+      for (let index = 0; index < rowsToImport.length; index++) {
+        const stopData = rowsToImport[index]
+        setImportProgress({ current: index + 1, total: rowsToImport.length })
 
         console.log("[v0] Processing Excel row:", stopData)
         processedCount++
 
         try {
-          const coordinates = await geocodeWithFallback(sanitizeAddressInput(stopData.address), stopData.town)
+          const place = chosenPlaces.get(normalizeTownName(stopData.town)) ?? resolvePlace(stopData.town)
+          const coordinates = await geocodeWithFallback(sanitizeAddressInput(stopData.address), stopData.town, place)
 
           if (!coordinates) {
             console.error(`[v0] Failed to geocode row ${processedCount}:`, stopData)
@@ -396,6 +455,7 @@ export default function RouteForm({
           importedStops.push({
             id: Date.now().toString() + Math.random(),
             ...stopData,
+            place,
             coordinates,
             distanceFromPrevious: undefined,
           })
@@ -468,16 +528,27 @@ export default function RouteForm({
     setIsSubmitting(true)
 
     try {
-      const coordinates = await geocodeWithFallback(sanitizeAddressInput(editFormData.address), editFormData.town)
-
       const actualIndex = index - FIXED_COUNT // Adjust for fixed stops
+      const current = stops[actualIndex]
+      // Keep the chosen municipality while the town name is unchanged
+      const place =
+        current.place && normalizeTownName(current.town) === normalizeTownName(editFormData.town)
+          ? current.place
+          : resolvePlace(editFormData.town)
+      const coordinates = await geocodeWithFallback(
+        sanitizeAddressInput(editFormData.address),
+        editFormData.town,
+        place,
+      )
+
       const newStops = [...stops]
 
       newStops[actualIndex] = {
-        ...newStops[actualIndex],
+        ...current,
         buyer: editFormData.buyer,
         town: editFormData.town,
         address: editFormData.address,
+        place,
         coordinates,
         distanceFromPrevious: undefined,
       }
@@ -642,6 +713,9 @@ export default function RouteForm({
 
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-muted-foreground truncate">{stop.town}</div>
+                  {"place" in stop && stop.place?.municipality && isAmbiguousTown(stop.town) && (
+                    <div className="text-xs text-muted-foreground truncate">{stop.place.municipality}</div>
+                  )}
                 </div>
 
                 <div className="flex-[1.5] min-w-0">
@@ -704,12 +778,19 @@ export default function RouteForm({
                   aria-expanded={townOpen}
                   className="h-9 w-full justify-between bg-transparent text-sm"
                 >
-                  <span className="truncate">{formData.town || t("selectPlaceholder")}</span>
+                  <span className="truncate">
+                    {selectedPlace
+                      ? isAmbiguousTown(selectedPlace.name) && selectedPlace.municipality
+                        ? `${selectedPlace.name} (${selectedPlace.municipality})`
+                        : selectedPlace.name
+                      : t("selectPlaceholder")}
+                  </span>
                   <ChevronsUpDown className="ml-1 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-[220px] p-0" align="start">
-                <Command>
+              <PopoverContent className="w-[260px] p-0" align="start">
+                {/* Filtered by filteredTowns; cmdk's own fuzzy filter would also match on the municipality */}
+                <Command shouldFilter={false}>
                   <CommandInput
                     placeholder={t("searchPlaceholder")}
                     value={townSearch}
@@ -728,11 +809,12 @@ export default function RouteForm({
                         <CommandGroup>
                           {filteredTowns.map((town) => (
                             <CommandItem
-                              key={`${town.postcode ?? "no-postcode"}-${town.coordinates.join(",")}-${town.name}`}
-                              value={town.name}
-                              onSelect={(currentValue) => {
-                                setFormData({ ...formData, town: currentValue, address: "" })
-                                setTownSearch(currentValue)
+                              key={`${placeKey(town)}-${town.name}`}
+                              value={`${town.name} ${placeKey(town)}`}
+                              onSelect={() => {
+                                setFormData({ ...formData, town: town.name, address: "" })
+                                setSelectedPlace(town)
+                                setTownSearch(town.name)
                                 setAddressSearch("")
                                 setTownOpen(false)
                               }}
@@ -741,10 +823,17 @@ export default function RouteForm({
                               <Check
                                 className={cn(
                                   "mr-2 h-4 w-4",
-                                  formData.town === town.name ? "opacity-100" : "opacity-0",
+                                  selectedPlace && placeKey(selectedPlace) === placeKey(town)
+                                    ? "opacity-100"
+                                    : "opacity-0",
                                 )}
                               />
-                              {town.name}
+                              <div className="flex min-w-0 flex-col">
+                                <span>{town.name}</span>
+                                {placeRegion(town) && (
+                                  <span className="truncate text-xs text-muted-foreground">{placeRegion(town)}</span>
+                                )}
+                              </div>
                             </CommandItem>
                           ))}
                         </CommandGroup>
@@ -888,6 +977,7 @@ export default function RouteForm({
         columns={excelColumns}
         onComplete={handleColumnMappingComplete}
       />
+      <TownChoiceDialog choices={townChoices} onComplete={finishTownChoices} />
     </div>
   )
 }

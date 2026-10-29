@@ -13,15 +13,21 @@ const waitForGeocodeSlot = async () => {
   }
 }
 
-export async function geocodeAddress(address: string): Promise<[number, number] | undefined> {
-  const key = address.trim().toLowerCase()
+// `near` limits results to the surroundings of a known place, so a street is not found in a namesake town
+export async function geocodeAddress(
+  address: string,
+  near?: [number, number],
+): Promise<[number, number] | undefined> {
+  const key = [address.trim().toLowerCase(), near?.join(",")].filter(Boolean).join("@")
   const cached = geocodeCache.get(key)
   if (cached) return cached
 
   const request = (async () => {
     await waitForGeocodeSlot()
     try {
-      const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
+      const params = new URLSearchParams({ address })
+      if (near) params.set("near", near.join(","))
+      const response = await fetch(`/api/geocode?${params.toString()}`)
       const data = await response.json()
 
       if (data.coordinates) {
